@@ -39,15 +39,12 @@ class NcclAllGatherThunk : public NcclCollectiveThunk {
 
   // Returns whether the given instruction can be lowered to a nccl all-gather
   // call.
-
-  // HLO version is still needed for AllGatherDecomposer pass.
-  static bool CanImplement(const HloInstruction* hlo);
   static bool CanImplement(mlir::lmhlo::AllGatherOp op);
 
   static const char* GetName() { return "AllGather"; }
 
-  static bool IsDegenerate(mlir::lmhlo::AllGatherOp op, int64 replica_count,
-                           int64 partition_count) {
+  static bool IsDegenerate(mlir::lmhlo::AllGatherOp op, int64_t replica_count,
+                           int64_t partition_count) {
     return GetNcclAllGatherConfig(op).config.IsDegenerate(replica_count,
                                                           partition_count);
   }

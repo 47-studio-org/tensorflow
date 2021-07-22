@@ -163,7 +163,7 @@ xla::StatusOr<xla::ShapeTree<xla::MaybeOwningDeviceMemory>> BuildInputBuffers(
     buffers->buffers().ForEachMutableElement(
         [&](const xla::ShapeIndex& index, se::DeviceMemoryBase* buffer) {
           xla::ShapeIndex in_index = {arg_index};
-          for (int64 j : index) {
+          for (int64_t j : index) {
             in_index.push_back(j);
           }
           if (owning) {
@@ -245,7 +245,7 @@ Status UpdateOutputVariables(
 
   std::vector<TensorShape> output_tensor_shapes;
   output_tensor_shapes.reserve(sub_elements);
-  for (int64 i = 0; i < sub_elements; ++i) {
+  for (int64_t i = 0; i < sub_elements; ++i) {
     TF_RETURN_IF_ERROR(
         TensorShape::IsValidShape(*output_tensor_shape_protos[i]));
     TensorShape shape(*output_tensor_shape_protos[i]);
@@ -284,7 +284,7 @@ Status UpdateOutputVariables(
       shaped_buffer.buffers().ForEachMutableElement(
           [&](const xla::ShapeIndex& index, se::DeviceMemoryBase* buffer) {
             xla::ShapeIndex out_index = {i};
-            for (int64 j : index) {
+            for (int64_t j : index) {
               out_index.push_back(j);
             }
             *buffer = output_buffers.buffers().element(out_index);
@@ -297,13 +297,10 @@ Status UpdateOutputVariables(
   };
 
   for (int i = 0; i < variables.size(); ++i) {
-    PersistentTensor unused;
-    Tensor* output_tensor;
-    TF_RETURN_IF_ERROR(context->allocate_persistent(
-        variables[i].var()->tensor()->dtype(), output_tensor_shapes[i], &unused,
-        &output_tensor));
-    *variables[i].var()->tensor() = *output_tensor;
-    transfer_buffers(i, output_tensor);
+    TF_RETURN_IF_ERROR(context->allocate_temp(
+        variables[i].var()->tensor()->dtype(), output_tensor_shapes[i],
+        variables[i].var()->tensor()));
+    transfer_buffers(i, variables[i].var()->tensor());
   }
   return allocator->Deallocate(output_buffers.device_ordinal(),
                                output_buffers.buffer({}));

@@ -111,7 +111,7 @@ bool NcclCollectiveConfig::IsDegenerate(int64_t replica_count,
 
 Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 #if XLA_ENABLE_XCCL
-  VLOG(1) << absl::StreamFormat("Starting %s.", ThunkKindToString(kind()));
+  VLOG(1) << absl::StreamFormat("Starting %s.", Thunk::KindToString(kind()));
   auto op_profiler =
       params.profiler->MakeScopedInstructionProfiler(profile_index());
 
@@ -138,14 +138,8 @@ Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
   const RendezvousKey rendezvous_key(
       params.run_id, std::move(participants), local_participants.size(),
       config().collective_op_kind, config().op_id);
-  if (VLOG_IS_ON(2)) {
-    TF_ASSIGN_OR_RETURN(
-        DeviceAssignment::LogicalID logical_id,
-        params.device_assn->LogicalIdForDevice(global_device_id));
-    VLOG(2) << "global device " << global_device_id << ", (r"
-            << logical_id.replica_id << ", p" << logical_id.computation_id
-            << ") key " << rendezvous_key.ToString() << "\n";
-  }
+  VLOG(2) << GetDeviceString(params) << ": key " << rendezvous_key.ToString()
+          << "\n";
 
   int device_ordinal = params.stream->parent()->device_ordinal();
 
@@ -168,6 +162,17 @@ Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 #endif  // XLA_ENABLE_XCCL
 }
 
+std::string NcclCollectiveThunk::GetDeviceString(
+    const ExecuteParams& params) const {
+  int device_ordinal = params.stream->parent()->device_ordinal();
+  GlobalDeviceId global_device_id = params.GetGlobalDeviceId().ValueOrDie();
+  DeviceAssignment::LogicalID logical_id =
+      params.device_assn->LogicalIdForDevice(global_device_id).ValueOrDie();
+  return absl::StrFormat("(r%d, p%d) : GlobalID %d, ord %d",
+                         logical_id.replica_id, logical_id.computation_id,
+                         global_device_id.value(), device_ordinal);
+}
+
 bool IsTypeSupportedByNccl(PrimitiveType element_type) {
   switch (element_type) {
     case S8:
@@ -180,6 +185,11 @@ bool IsTypeSupportedByNccl(PrimitiveType element_type) {
     case F16:
     case F32:
     case F64:
+#if defined(__CUDA_BF16_TYPES_EXIST__)
+    case BF16:
+#endif
+    case C64:
+    case C128:
       return true;
     default:
       return false;

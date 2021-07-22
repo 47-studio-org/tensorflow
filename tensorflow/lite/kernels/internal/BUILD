@@ -1,15 +1,14 @@
 load("@bazel_skylib//lib:selects.bzl", "selects")
 load("//tensorflow:tensorflow.bzl", "transitive_hdrs")
 load("//tensorflow/lite:build_def.bzl", "tflite_copts")
-load("//tensorflow/lite/micro:build_def.bzl", "micro_copts")
-load("//tensorflow/lite:special_rules.bzl", "tflite_portable_test_suite_combined")
+load("//tensorflow/lite:special_rules.bzl", "tflite_extra_arm_config_settings", "tflite_portable_test_suite_combined")
 load("//tensorflow:tensorflow.bzl", "get_compatible_with_portable")
 
 package(
     default_visibility = [
         "//visibility:public",
     ],
-    licenses = ["notice"],  # Apache 2.0
+    licenses = ["notice"],
 )
 
 HARD_FP_FLAGS_IF_APPLICABLE = select({
@@ -242,7 +241,7 @@ selects.config_setting_group(
         ":ios_arm64e",
         ":darwin_arm64",
         ":raspberry_pi_with_neon",
-    ],
+    ] + tflite_extra_arm_config_settings(),
 )
 
 cc_library(
@@ -349,7 +348,6 @@ cc_library(
     name = "optimized_eigen",
     hdrs = [
         "optimized/eigen_spatial_convolutions.h",
-        "optimized/eigen_tensor_reduced_instantiations_oss.h",
         "optimized/multithreaded_conv.h",
     ],
     compatible_with = get_compatible_with_portable(),
@@ -390,7 +388,7 @@ cc_library(
     srcs = ["quantization_util.cc"],
     hdrs = ["quantization_util.h"],
     compatible_with = get_compatible_with_portable(),
-    copts = tflite_copts() + micro_copts(),
+    copts = tflite_copts(),
     linkopts = select({
         "//tensorflow:windows": [],
         "//conditions:default": ["-lm"],
@@ -432,7 +430,7 @@ cc_test(
     srcs = ["transpose_utils_test.cc"],
     deps = [
         ":transpose_utils",
-        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -460,6 +458,7 @@ cc_library(
         "reference/batch_matmul.h",
         "reference/batch_to_space_nd.h",
         "reference/binary_function.h",
+        "reference/broadcast_args.h",
         "reference/broadcast_to.h",
         "reference/cast.h",
         "reference/ceil.h",
@@ -467,6 +466,8 @@ cc_library(
         "reference/concatenation.h",
         "reference/conv.h",
         "reference/conv3d.h",
+        "reference/conv3d_transpose.h",
+        "reference/cumsum.h",
         "reference/densify.h",
         "reference/depth_to_space.h",
         "reference/depthwiseconv_float.h",
@@ -496,6 +497,7 @@ cc_library(
         "reference/l2normalization.h",
         "reference/leaky_relu.h",
         "reference/logistic.h",
+        "reference/log_softmax.h",
         "reference/maximum_minimum.h",
         "reference/mul.h",
         "reference/neg.h",
@@ -507,6 +509,7 @@ cc_library(
         "reference/quantize.h",
         "reference/reduce.h",
         "reference/requantize.h",
+        "reference/resize_bilinear.h",
         "reference/resize_nearest_neighbor.h",
         "reference/round.h",
         "reference/softmax.h",
@@ -575,6 +578,7 @@ cc_library(
         "reference/concatenation.h",
         "reference/conv.h",
         "reference/conv3d.h",
+        "reference/cumsum.h",
         "reference/densify.h",
         "reference/depth_to_space.h",
         "reference/depthwiseconv_float.h",
@@ -593,6 +597,7 @@ cc_library(
         "reference/l2normalization.h",
         "reference/leaky_relu.h",
         "reference/legacy_reference_ops.h",
+        "reference/log_softmax.h",
         "reference/logistic.h",
         "reference/maximum_minimum.h",
         "reference/mul.h",
@@ -756,7 +761,7 @@ cc_library(
     srcs = ["kernel_utils.cc"],
     hdrs = ["kernel_utils.h"],
     compatible_with = get_compatible_with_portable(),
-    copts = tflite_copts() + micro_copts(),
+    copts = tflite_copts(),
     deps = [
         ":tensor_utils",
         "//tensorflow/lite/c:common",
@@ -807,7 +812,10 @@ cc_library(
         ): [":neon_tensor_utils"],
         (
             ":x86_any",
-        ): [":sse_tensor_utils"],
+        ): [
+            ":portable_tensor_utils",  # If SSSE3 isn't available, we fall back to portable
+            ":sse_tensor_utils",
+        ],
         (
             "//tensorflow/lite:tf_lite_static_memory",
             "//conditions:default",
@@ -1101,8 +1109,6 @@ cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
-
-exports_files(["optimized/eigen_tensor_reduced_instantiations_oss.h"])
 
 filegroup(
     name = "optimized_op_headers",

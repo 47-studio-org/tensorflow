@@ -200,6 +200,10 @@ def _check_conversion_params(conversion_params, is_v2=False):
         ("precision mode '{}' is not supported."
          "It should be one of {}").format(conversion_params.precision_mode,
                                           supported_precision_modes))
+  if (conversion_params.minimum_segment_size <= 0 and
+      conversion_params.minimum_segment_size != -1):
+    raise ValueError("minimum segment size should be positive or -1 "
+                     "(to disable main graph conversion).")
 
 
 def _check_trt_version_compatibility():
@@ -469,7 +473,8 @@ class TrtGraphConverter(object):
     self._calibration_graph = None
     self._calibration_data_collected = False
     self._need_calibration = (
-        precision_mode == TrtPrecisionMode.INT8 and use_calibration)
+        ((precision_mode == TrtPrecisionMode.INT8) or
+         (precision_mode == TrtPrecisionMode.INT8.lower())) and use_calibration)
     if self._need_calibration and not is_dynamic_op:
       tf_logging.warn(
           "INT8 precision mode with calibration is supported with "
@@ -809,21 +814,6 @@ def _get_resource_handle(name, device):
     return gen_trt_ops.create_trt_resource_handle(resource_name=name)
 
 
-class _TRTEngineResourceDeleter(tracking.CapturableResourceDeleter):
-  """Resource deleter for destroying TRT engine cache resource."""
-
-  def __init__(self, resource_name, device):
-    super(_TRTEngineResourceDeleter, self).__init__()
-    self._resource_name = resource_name
-    self._device = device
-
-  def destroy_resource(self):
-    handle = _get_resource_handle(self._resource_name, self._device)
-    with ops.device(self._device):
-      gen_resource_variable_ops.destroy_resource_op(
-          handle, ignore_lookup_error=True)
-
-
 class _TRTEngineResource(tracking.TrackableResource):
   """Class to track the serialized engines resource."""
 
@@ -832,8 +822,7 @@ class _TRTEngineResource(tracking.TrackableResource):
                filename,
                maximum_cached_engines,
                device="GPU"):
-    super(_TRTEngineResource, self).__init__(
-        device=device, deleter=_TRTEngineResourceDeleter(resource_name, device))
+    super(_TRTEngineResource, self).__init__(device=device)
     self._resource_name = resource_name
     # Track the serialized engine file in the SavedModel.
     self._filename = self._track_trackable(
@@ -848,6 +837,12 @@ class _TRTEngineResource(tracking.TrackableResource):
         self.resource_handle,
         self._filename,
         max_cached_engines_count=self._maximum_cached_engines)
+
+  def _destroy_resource(self):
+    handle = _get_resource_handle(self._resource_name, self._resource_device)
+    with ops.device(self._resource_device):
+      gen_resource_variable_ops.destroy_resource_op(
+          handle, ignore_lookup_error=True)
 
 
 @tf_export("experimental.tensorrt.Converter", v1=[])
@@ -1004,9 +999,10 @@ class TrtGraphConverterV2(object):
         input_saved_model_signature_key or
         signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY)
 
-    self._need_calibration = (
-        conversion_params.precision_mode == TrtPrecisionMode.INT8 and
-        conversion_params.use_calibration)
+    self._need_calibration = ((
+        (conversion_params.precision_mode == TrtPrecisionMode.INT8) or
+        (conversion_params.precision_mode == TrtPrecisionMode.INT8.lower())) and
+                              conversion_params.use_calibration)
 
     self._converted = False
     self._build_called_once = False
@@ -1117,6 +1113,15 @@ class TrtGraphConverterV2(object):
 
     # Run TRT optimizer in Grappler to convert the graph.
     self._converted_graph_def = self._run_conversion(grappler_meta_graph_def)
+    # If a function is converted, then the TF context contains the original
+    # function while the converted_graph_def contains the converted function.
+    # Remove the original function from the TF context in this case.
+    for f in self._converted_graph_def.library.function:
+      while context.context().has_function(f.signature.name):
+        tf_logging.info("Removing original function %s from the context",
+                        f.signature.name)
+        context.context().remove_function(f.signature.name)
+    # This also adds the converted functions to the context.
     self._converted_func = wrap_function.function_from_graph_def(
         self._converted_graph_def,
         [tensor.name for tensor in frozen_func.inputs],

@@ -44,9 +44,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_dump_include_timestamp(true);
   opts.set_xla_dump_max_hlo_modules(-1);
   opts.set_xla_dump_module_metadata(false);
-#ifdef INTEL_MKL
+#ifdef ENABLE_MKL
   opts.set_xla_cpu_use_mkl_dnn(true);
-#endif  // INTEL_MKL
+#endif  // ENABLE_MKL
   opts.set_xla_gpu_max_kernel_unroll_factor(4);
   // Set cudnn batchnorm off by default; it does not provide a performance win
   // on average.
@@ -76,7 +76,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_enable_xprof_traceme(false);
   opts.set_xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found(false);
   opts.set_xla_multiheap_size_constraint_per_heap(-1);
-  opts.set_xla_detailed_logging(true);
+  opts.set_xla_detailed_logging_and_dumping(true);
   return opts;
 }
 
@@ -544,6 +544,11 @@ static void AllocateFlags() {
       "Dumps HloModuleMetadata as text protos to the directory specified "
       "by --xla_dump_to."));
   flag_objects->push_back(tensorflow::Flag(
+      "xla_dump_compress_protos",
+      bool_setter_for(&DebugOptions::set_xla_dump_compress_protos),
+      flag_values->xla_dump_compress_protos(),
+      "Gzip-compress protos dumped by --xla_dump_hlo_as_proto."));
+  flag_objects->push_back(tensorflow::Flag(
       "xla_hlo_graph_addresses",
       bool_setter_for(&DebugOptions::set_xla_hlo_graph_addresses),
       flag_values->xla_hlo_graph_addresses(),
@@ -629,9 +634,25 @@ static void AllocateFlags() {
       bool_setter_for(&DebugOptions::set_xla_gpu_deterministic_ops),
       flag_values->xla_gpu_deterministic_ops(),
       "Guarantees run-to-run determinism on GPU."));
+  flag_objects->push_back(tensorflow::Flag(
+      "xla_gpu_enable_async_all_reduce",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_async_all_reduce),
+      flag_values->xla_gpu_enable_async_all_reduce(),
+      "Converts synchronous all-reduce ops into asynchronous."));
+  flag_objects->push_back(tensorflow::Flag(
+      "xla_dump_disable_metadata",
+      bool_setter_for(&DebugOptions::set_xla_dump_disable_metadata),
+      flag_values->xla_dump_disable_metadata(),
+      "Disable dumping HLO metadata in HLO dumps."));
+  flag_objects->push_back(tensorflow::Flag(
+      "xla_dump_hlo_pipeline_re",
+      string_setter_for(&DebugOptions::set_xla_dump_hlo_pipeline_re),
+      flag_values->xla_dump_hlo_pipeline_re(),
+      "If specified, dumps HLO before and after optimization passes in the "
+      "pass pipelines that match this regular expression."));
 
   ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", *flag_objects);
-}
+}  // NOLINT(readability/fn_size)
 
 void AppendDebugOptionsFlags(std::vector<tensorflow::Flag>* flag_list) {
   absl::call_once(flags_init, &AllocateFlags);

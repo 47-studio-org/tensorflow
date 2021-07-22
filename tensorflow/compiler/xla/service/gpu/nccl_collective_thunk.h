@@ -22,6 +22,7 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/xla/attribute_exporter.h"
 #include "tensorflow/compiler/mlir/xla/type_to_shape.h"
 #include "tensorflow/compiler/xla/service/collective_ops_utils.h"
+#include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
 #include "tensorflow/compiler/xla/service/gpu/thunk.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
@@ -56,7 +57,7 @@ using ncclComm_t = ncclComm*;
 namespace xla {
 namespace gpu {
 
-struct NcclClique;
+class NcclClique;
 
 struct NcclCollectiveConfig {
   NcclCollectiveConfig();
@@ -72,8 +73,24 @@ struct NcclCollectiveConfig {
   int64 op_id;
   CollectiveOpGroupMode group_mode;
 
+  template <typename OpT>
+  void SetCollectiveOpKindAndID(OpT op);
   bool IsDegenerate(int64_t replica_count, int64_t partition_count) const;
 };
+
+template <typename OpT>
+void NcclCollectiveConfig::SetCollectiveOpKindAndID(OpT op) {
+  if (op.channel_id()) {
+    collective_op_kind = RendezvousKey::kCrossModule;
+    op_id = static_cast<int64>(op.channel_id()->handle().getInt());
+  } else {
+    collective_op_kind = RendezvousKey::kCrossReplica;
+    mlir::ModuleOp parent = op->template getParentOfType<mlir::ModuleOp>();
+    mlir::IntegerAttr unique_id =
+        parent->getAttrOfType<mlir::IntegerAttr>("hlo.unique_id");
+    op_id = static_cast<int64>(unique_id.getInt());
+  }
+}
 
 template <typename OpT>
 NcclCollectiveConfig GetNcclCollectiveConfigForMlir(
@@ -82,22 +99,12 @@ NcclCollectiveConfig GetNcclCollectiveConfigForMlir(
   config.operand_count = op.operands().size();
   config.operand_element_type.reserve(config.operand_count);
   for (int i = 0; i < config.operand_count; i++) {
-    const Shape shape = TypeToShape(op.operands()[i].getType());
+    const Shape shape = GetShape(op.operands()[i]);
     config.operand_element_type.push_back(shape.element_type());
   }
   config.replica_groups =
       ConvertReplicaGroups(op.replica_groups()).ValueOrDie();
-
-  if (!op.IsCrossReplica()) {
-    config.collective_op_kind = RendezvousKey::kCrossModule;
-    config.op_id = static_cast<int64>(op.channel_id()->handle().getInt());
-  } else {
-    config.collective_op_kind = RendezvousKey::kCrossReplica;
-    mlir::ModuleOp parent = op->template getParentOfType<mlir::ModuleOp>();
-    mlir::IntegerAttr unique_id =
-        parent->getAttrOfType<mlir::IntegerAttr>("hlo.unique_id");
-    config.op_id = static_cast<int64>(unique_id.getInt());
-  }
+  config.SetCollectiveOpKindAndID(op);
   config.group_mode = GetCollectiveOpGroupMode(op.channel_id().hasValue(),
                                                use_global_device_ids)
                           .ValueOrDie();
@@ -129,6 +136,9 @@ class NcclCollectiveThunk : public Thunk {
   virtual Status RunNcclCollective(const ExecuteParams& params,
                                    ncclComm_t comm) = 0;
   virtual const NcclCollectiveConfig& config() const = 0;
+
+  // Logging support.
+  std::string GetDeviceString(const ExecuteParams& params) const;
 };
 
 // Returns if the given data type is supported by NCCL.

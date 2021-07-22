@@ -56,30 +56,11 @@ Status TrtPrecisionModeFromName(const string& name, TrtPrecisionMode* mode) {
 
 #if GOOGLE_CUDA && GOOGLE_TENSORRT
 
-string DebugString(const nvinfer1::DimensionType type) {
-  switch (type) {
-    case nvinfer1::DimensionType::kSPATIAL:
-      return "kSPATIAL";
-    case nvinfer1::DimensionType::kCHANNEL:
-      return "kCHANNEL";
-    case nvinfer1::DimensionType::kINDEX:
-      return "kINDEX";
-    case nvinfer1::DimensionType::kSEQUENCE:
-      return "kSEQUENCE";
-    default:
-      return StrCat(static_cast<int>(type), "=unknown");
-  }
-}
-
 string DebugString(const nvinfer1::Dims& dims) {
   string out = StrCat("nvinfer1::Dims(nbDims=", dims.nbDims, ", d=");
   for (int i = 0; i < dims.nbDims; ++i) {
     StrAppend(&out, dims.d[i]);
-    if (VLOG_IS_ON(2)) {
-      StrAppend(&out, "[", DebugString(dims.type[i]), "],");
-    } else {
-      StrAppend(&out, ",");
-    }
+    StrAppend(&out, ",");
   }
   StrAppend(&out, ")");
   return out;
@@ -128,6 +109,10 @@ string DebugString(const nvinfer1::Permutation& permutation, int len) {
   }
   StrAppend(&out, ")");
   return out;
+}
+
+string DebugString(const ITensorProxyPtr& tensor) {
+  return DebugString(*tensor->trt_tensor());
 }
 
 string DebugString(const nvinfer1::ITensor& tensor) {
@@ -187,7 +172,7 @@ Status GetNetworkInputShapes(const nvinfer1::INetworkDefinition* network,
   const int n_inputs = network->getNbInputs();
   input_shapes->resize(n_inputs);
   for (int i = 0; i < n_inputs; i++) {
-    const nvinfer1::ITensor* input = network->getInput(i);
+    const ITensorProxyPtr input = network->getInput(i);
     const nvinfer1::Dims input_dim = input->getDimensions();
     TF_RETURN_IF_ERROR(TrtDimsToTensorShape(input_dim, &input_shapes->at(i)));
   }
@@ -273,13 +258,16 @@ string ProfileStrategyToName(const ProfileStrategy strategy) {
 }
 
 Status ProfileStrategyFromName(const string& name, ProfileStrategy* strategy) {
-  if (name == "range") {
+  string name_lowercase(name);
+  std::transform(name.begin(), name.end(), name_lowercase.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  if (name_lowercase == "range") {
     *strategy = ProfileStrategy::kRange;
-  } else if (name == "optimal") {
+  } else if (name_lowercase == "optimal") {
     *strategy = ProfileStrategy::kOptimal;
-  } else if (name == "range+optimal") {
+  } else if (name_lowercase == "range+optimal") {
     *strategy = ProfileStrategy::kRangeOptimal;
-  } else if (name == "implicitbatchmodecompatible") {
+  } else if (name_lowercase == "implicitbatchmodecompatible") {
     *strategy = ProfileStrategy::kImplicitBatchModeCompatible;
   } else {
     return errors::InvalidArgument("Invalid profile strategy: ", name);

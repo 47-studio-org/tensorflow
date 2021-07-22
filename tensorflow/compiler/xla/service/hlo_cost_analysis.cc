@@ -741,7 +741,15 @@ Status HloCostAnalysis::HandleCholesky(const HloInstruction* hlo) {
   return Status::OK();
 }
 
-Status HloCostAnalysis::HandleAllGather(const HloInstruction* hlo) {
+Status HloCostAnalysis::HandleAllGather(const HloInstruction* /*hlo*/) {
+  return Status::OK();
+}
+
+Status HloCostAnalysis::HandleAllGatherStart(const HloInstruction* hlo) {
+  return HandleAllGather(hlo);
+}
+
+Status HloCostAnalysis::HandleAllGatherDone(const HloInstruction* /*hlo*/) {
   return Status::OK();
 }
 
@@ -752,13 +760,33 @@ Status HloCostAnalysis::HandleAllReduce(const HloInstruction* crs) {
   // TODO(b/33004697): Compute correct cost here, taking the actual number of
   // replicas into account.
   double flops = 0.0;
-  ShapeUtil::ForEachSubshape(crs->shape(),
-                             [&](const Shape& subshape, const ShapeIndex&) {
-                               if (subshape.IsArray()) {
-                                 flops += ShapeUtil::ElementsIn(subshape);
-                               }
-                             });
+  int64_t output_bytes_accessed = 0;
+  ShapeUtil::ForEachSubshape(
+      crs->shape(), [&](const Shape& subshape, const ShapeIndex&) {
+        if (subshape.IsArray()) {
+          flops += ShapeUtil::ElementsIn(subshape);
+          output_bytes_accessed += GetShapeSize(subshape);
+        }
+      });
+  int64_t bytes_accessed = output_bytes_accessed;
+  for (const HloInstruction* operand : crs->operands()) {
+    bytes_accessed += GetShapeSize(operand->shape());
+  }
   current_properties_[kFlopsKey] = flops;
+  SetOutputBytesAccessed(output_bytes_accessed);
+  current_properties_[kBytesAccessedKey] = bytes_accessed;
+  return Status::OK();
+}
+
+Status HloCostAnalysis::HandleReduceScatter(const HloInstruction* hlo) {
+  return Status::OK();
+}
+
+Status HloCostAnalysis::HandleAllReduceStart(const HloInstruction* hlo) {
+  return HandleAllReduce(hlo);
+}
+
+Status HloCostAnalysis::HandleAllReduceDone(const HloInstruction* /*hlo*/) {
   return Status::OK();
 }
 

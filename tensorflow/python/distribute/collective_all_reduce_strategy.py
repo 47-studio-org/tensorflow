@@ -330,6 +330,10 @@ class CollectiveAllReduceExtended(mirrored_strategy.MirroredExtended):
     assert isinstance(self._cross_device_ops,
                       cross_device_ops_lib.CollectiveAllReduce)
 
+  def _use_merge_call(self):
+    """XLA is not supported for multi-worker strategy."""
+    return True
+
   def _initialize_strategy(self, cluster_resolver):
     if cluster_resolver.cluster_spec().as_dict():
       self._initialize_multi_worker(cluster_resolver)
@@ -506,8 +510,10 @@ class CollectiveAllReduceExtended(mirrored_strategy.MirroredExtended):
     self._rpc_layer = cluster_resolver.rpc_layer
     self._warn_nccl_no_gpu()
 
-    if self._enable_check_health:
+    if self._enable_check_health and context.executing_eagerly():
       self._start_check_health_thread()
+    else:
+      logging.info("Check health not enabled.")
 
     logging.info(
         "MultiWorkerMirroredStrategy with cluster_spec = %r, task_type = %r, "
@@ -595,7 +601,8 @@ class CollectiveAllReduceExtended(mirrored_strategy.MirroredExtended):
       raise NotImplementedError(
           "InputReplicationMode.PER_REPLICA "
           "is only supported in "
-          "`experimental_distribute_datasets_from_function`."
+          "`distribute_datasets_from_function` "
+          "of tf.distribute.MirroredStrategy"
       )
     input_context = self._make_input_context()
     return input_lib.get_distributed_dataset(
@@ -612,7 +619,7 @@ class CollectiveAllReduceExtended(mirrored_strategy.MirroredExtended):
       raise NotImplementedError(
           "InputReplicationMode.PER_REPLICA "
           "is only supported in "
-          " `experimental_distribute_datasets_from_function` "
+          "`distribute_datasets_from_function` "
           "of tf.distribute.MirroredStrategy")
     input_context = self._make_input_context()
     return input_lib.get_distributed_datasets_from_function(
@@ -839,9 +846,6 @@ class CollectiveAllReduceExtended(mirrored_strategy.MirroredExtended):
       time.sleep(self._check_health_interval)
 
   def _start_check_health_thread(self):
-    if not context.executing_eagerly():
-      logging.info("Check health is only supported in eager.")
-      return
     # Use a dummy all-reduce as a barrier to wait for all workers to be up,
     # otherwise the check health may fail immediately.
 
@@ -934,3 +938,20 @@ class CollectiveAllReduceExtended(mirrored_strategy.MirroredExtended):
   def _get_local_replica_id(self, replica_id_in_sync_group):
     return (replica_id_in_sync_group -
             self._id_in_cluster * len(self.worker_devices))
+
+  def __deepcopy__(self, memo):
+    # We check the check health thread instead of whether we are in eager mode
+    # to limit the backward incompatibility.
+    if hasattr(self, "_check_health_thread"):
+      raise ValueError(
+          "MultiWorkerMirroredStrategy cannot be deep copied in eager mode. "
+          "If you're using Estimator and see this error message, call "
+          "tf.compat.v1.disable_eager_execution() at the beginning of your "
+          "program")
+    # Otherwise, do a regular deepcopy.
+    cls = self.__class__
+    result = cls.__new__(cls)
+    memo[id(self)] = result
+    for k, v in self.__dict__.items():
+      setattr(result, k, copy.deepcopy(v, memo))
+    return result
