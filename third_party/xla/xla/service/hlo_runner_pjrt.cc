@@ -459,13 +459,16 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicatedImpl(
     std::function<const Literal*(int64_t, int64_t)> argument_provider,
     const ReplicatedExecuteOptions& options,
     DeviceAssignment* device_assignment) {
+  const int64_t num_computations = device_assignment->computation_count();
   absl::Span<PjRtDevice* const> devices = pjrt_client_->devices();
 
   std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> argument_buffer_slices;
   argument_buffer_slices.reserve(pjrt_client_->addressable_device_count());
 
   for (int64_t i = 0; i < options.num_replicas; ++i) {
-    PjRtDevice* device_ptr = devices[i];
+    const int64_t device_index =
+        (*device_assignment)(i / num_computations, i % num_computations);
+    PjRtDevice* device_ptr = devices[device_index];
 
     // Transfer literals to device.
     const int64_t argument_count = argument_count_provider(i);
@@ -477,8 +480,12 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicatedImpl(
       const Literal* const argument = argument_provider(i, arg_index);
       TF_RET_CHECK(argument != nullptr);
 
-      TF_ASSIGN_OR_RETURN(auto assignment, pjrt_client_->BufferFromHostLiteral(
-                                               *argument, device_ptr));
+      TF_ASSIGN_OR_RETURN(
+          std::unique_ptr<PjRtBuffer> assignment,
+          use_parameter_layout_on_device_
+              ? pjrt_client_->BufferFromHostLiteral(*argument, device_ptr,
+                                                    &argument->shape().layout())
+              : pjrt_client_->BufferFromHostLiteral(*argument, device_ptr));
       replica_buffers.push_back(std::move(assignment));
     }
 
