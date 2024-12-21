@@ -60,7 +60,7 @@ auto MakeDeviceDescription() {
 class HorizontalLoopFusionTest : public HloTestBase {
  public:
   static bool IsFusion(const HloInstruction* instr) {
-    return instr->opcode() == HloOpcode::kFusion;
+    return HloPredicateIsOp<HloOpcode::kFusion>(instr);
   }
   const se::DeviceDescription device_description_{MakeDeviceDescription()};
 };
@@ -189,6 +189,23 @@ TEST_F(HorizontalLoopFusionTest, NegativeTestForIncompatibleTypes) {
       HorizontalLoopFusion{device_description_}.Run(module.get()).value());
 }
 
+TEST_F(HorizontalLoopFusionTest, NegativeTestForDifferentMemorySpace) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+ HloModule NegativeTestForIncompatibleSpaces
+ ENTRY main {
+   arg0 = f32[1]{0} parameter(0)
+   arg1 = f32[1]{0:S(5)} parameter(1)
+   cp1 = f32[1]{0} copy(arg0)
+   cp2 = f32[1]{0:S(5)} copy(arg1)
+   ROOT tuple_out = (f32[1]{0}, f32[1]{0:S(5)}) tuple(cp1, cp2)
+ }
+)")
+                    .value();
+
+  EXPECT_FALSE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
+}
+
 TEST_F(HorizontalLoopFusionTest, FusingIntoKLoopAndKInputTogether) {
   auto module = ParseAndReturnVerifiedModule(R"(
  HloModule FusingIntoKLoopAndKInputTogether
@@ -279,7 +296,7 @@ TEST_F(HorizontalLoopFusionTest, FusingIntoKLoopAndKInputTogether) {
   int input_fusion_count = 0;
   int loop_fusion_count = 0;
   for (auto inst : module->entry_computation()->MakeInstructionPostOrder()) {
-    if (inst->opcode() == HloOpcode::kFusion) {
+    if (HloPredicateIsOp<HloOpcode::kFusion>(inst)) {
       input_fusion_count +=
           (inst->fusion_kind() == HloInstruction::FusionKind::kInput) ? 1 : 0;
       loop_fusion_count +=
